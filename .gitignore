@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+htmlcov/
+.coverage
+backend/kb/compiled.md
+backend/kb/VERSION
+frontend/.next/
+frontend/node_modules/
+frontend/out/

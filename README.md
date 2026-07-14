@@ -1,0 +1,202 @@
+# TBM Carriers inbound sales/chat agent pilot
+
+Standalone bilingual (English/Spanish) freight-lead qualification pilot. The visitor widget
+collects shipment details, logs consent, progressively builds a lead, and emails a human sales
+specialist. It never quotes, estimates, or ranges prices.
+
+This repository is intentionally separate from TBM's main website and is designed for Benjamin's
+personal Vercel, Railway, and Neon accounts during the pilot.
+
+## What is included
+
+- Next.js 16 iframe widget and one-tag embed loader in `frontend/`
+- Async FastAPI and SSE API in `backend/`
+- Direct Anthropic SDK calls: Haiku for classification/extraction and Sonnet for conversation
+- Independent price controls in the Sonnet system prompt, Haiku classifier, and an output safety
+  buffer that blocks monetary values before streaming
+- Postgres/Alembic schema with `pgvector` enabled from the initial migration
+- Consent-gated transcript and lead persistence (no transcript text is stored before consent)
+- Persistent IP/session token buckets and a hard 20-user-message cap
+- Progressive lead upsert, deterministic qualification score, and Resend handoff email
+- KB compiler, 90-day purge job, daily threshold alert job, SQL analytics views, eval fixtures,
+  load test, and CI
+
+## Human decisions required before production
+
+These are deliberately not filled in by the implementation:
+
+1. **Privacy copy:** TBM/counsel must replace the visible EN/ES legal placeholders and publish a
+   real notice version. `pilot-placeholder-v0-legal-review-required` is not production legal copy.
+2. **Knowledge base:** TBM must provide and approve service, coverage, lane, FAQ, and objection
+   content. The compiler currently emits a no-approved-facts marker rather than inventing claims.
+3. **Handoff routing:** the pilot includes a **Resend** adapter, but TBM must approve the sender and
+   `HANDOFF_TO_EMAIL` inbox.
+4. **Controls:** the checked-in rate-limit values are clearly labeled pilot defaults. TBM must
+   approve the final thresholds and configure both daily alert thresholds.
+5. **Infrastructure:** create separate staging and production projects under Benjamin's personal
+   accounts; do not attach this repo to TBM's main Vercel organization or website repository.
+
+## Local setup
+
+Prerequisites: Node.js 20.9+, Python 3.12+, Docker, and an Anthropic API key.
+
+```bash
+docker compose up -d postgres
+
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+cp .env.example .env
+alembic upgrade head
+python -m app.jobs.compile_kb
+uvicorn app.main:app --reload --port 8000
+```
+
+In another terminal:
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`, then use the lower-right launcher. The demo page contains no TBM
+company claims; it exists only to exercise the embed.
+
+## Embed
+
+After the frontend and backend are deployed, a host page needs one tag:
+
+```html
+<script
+  src="https://YOUR-WIDGET-HOST/embed.js"
+  data-api-url="https://YOUR-API-HOST"
+  data-widget-url="/widget"
+  data-locale="es"
+  data-accent="#ff5a36"
+></script>
+```
+
+Add the widget host to `ALLOWED_WIDGET_ORIGINS` and the page host to
+`ALLOWED_PARENT_ORIGINS`. Session tokens bind the session ID, widget origin, parent origin, and
+expiration. Every session API call checks the signed token and both origins. The public endpoint
+also applies persistent IP/session rate limits; origin checks are not treated as authentication.
+
+## API
+
+- `POST /api/session` creates a scoped session token.
+- `POST /api/session/{id}/consent` logs the versioned consent and hashed IP.
+- `POST /api/session/{id}/message` returns `text/event-stream` events named `token` and `done`.
+- `POST /api/session/{id}/feedback` records the thumbs signal.
+- `GET /api/health` checks database connectivity.
+
+The message endpoint starts Haiku analysis and the Sonnet stream concurrently. No model text is
+released until Haiku has classified the turn. Pricing, escalation, or off-topic results cancel
+Sonnet and force fixed bilingual copy. Relevant Sonnet text is released through a sentence-sized
+safety buffer, which blocks numeric monetary/rate patterns even if the conversational model
+violates its prompt.
+
+## Data and consent behavior
+
+- Before consent, sessions and content-free analytics events may be stored, but **no message
+  content and no lead row/field are stored**. This avoids unreliable PII pattern guessing.
+- After consent, the current and future transcript can be stored. Pre-consent text is not backfilled.
+- `upsert_lead_fields()` checks for consent inside the repository write boundary, independently of
+  the route.
+- A lead becomes captured only when it has email or phone, plus origin and destination cities.
+- The first transition to captured sends one Resend handoff and fires `lead_captured` and
+  `handoff_sent` events. Missing email configuration records `handoff_pending_config` instead.
+
+The privacy copy is a legal placeholder, not legal advice. Managed Postgres provides at-rest
+encryption; all deployed URLs must use TLS.
+
+## Knowledge base
+
+Insert content into `kb_documents` as `draft`, complete human review, then change it to `approved`.
+Compile only approved rows:
+
+```bash
+cd backend
+python -m app.jobs.compile_kb
+```
+
+The generated Markdown and version hash are environment artifacts. Recompile before starting a new
+release and restart the backend so new sessions stamp the current version. Retrieval is explicitly
+out of scope; see [MIGRATION.md](./MIGRATION.md) for its trigger.
+
+## Scheduled jobs
+
+Configure Railway cron services (or equivalent) with the same image and environment:
+
+```bash
+# Daily, for example 08:00 UTC
+python -m app.jobs.daily_alert
+
+# Daily
+python -m app.jobs.purge
+```
+
+The daily alert remains disabled until an admin email and the relevant threshold are set. Spend is
+estimated from `llm_usage` events only after the per-million input/output rates are configured;
+those values are operational telemetry and are never exposed to visitors.
+
+The purge job removes transcripts, leads, consents/IP hashes, and session source data after 90 days
+when a session has no captured lead or has a disqualified lead. Qualified/converted sales data is
+retained under TBM's approved sales retention policy.
+
+## Analytics views
+
+After `alembic upgrade head`, query:
+
+```sql
+SELECT * FROM analytics_engagement;
+SELECT * FROM analytics_lead_capture;
+SELECT * FROM analytics_qualified_leads;
+SELECT * FROM analytics_escalation;
+SELECT * FROM analytics_latency;
+SELECT * FROM analytics_feedback;
+```
+
+These cover engagement, captured and qualified leads, escalation, median first-token/full-response
+latency, and thumbs-up ratio. Content-free message events make engagement and latency measurable
+even when a visitor never consents.
+
+## Tests
+
+```bash
+cd backend
+ruff format --check app tests
+ruff check app tests
+pytest -q -m 'not live_llm'
+
+# Requires a migrated Postgres database
+TEST_DATABASE_URL=postgresql+asyncpg://... pytest -q tests/test_analytics_views.py
+
+# Calls Anthropic: 30+ extraction cases and 20 pricing probes
+ANTHROPIC_API_KEY=... pytest -q -m live_llm
+
+# Load/rate/cap exercise against a running API
+locust -f tests/load/locustfile.py --host http://localhost:8000
+
+cd ../frontend
+npm run lint
+npm run build
+```
+
+The deterministic suite includes strict extraction-schema fixtures, pricing pivots and output
+blocking, consent denial, signed token scope, token-bucket behavior, and the message cap. Live LLM
+evals are kept opt-in so CI is deterministic and cannot create unbounded model spend.
+
+## Deployment map
+
+| Surface | Pilot provider | Staging/prod rule |
+| --- | --- | --- |
+| Widget | Vercel personal account | Separate Vercel projects and environment values |
+| API + cron | Railway personal account | Separate services/projects; health path `/api/health` |
+| Postgres | Neon personal account | Separate databases/roles; enable `vector` and `pgcrypto` |
+| Email | Resend | Separate test/production sender configuration |
+
+Run migrations and compile the approved KB before shifting traffic. No CRM, rate engine, embeddings,
+or main-site repository integration belongs in this pilot.

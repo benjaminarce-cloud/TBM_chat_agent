@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tbm-chat-backend"
+version = "0.1.0"
+description = "FastAPI backend for the TBM Carriers inbound chat pilot"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14,<2",
+  "anthropic>=0.52,<1",
+  "asyncpg>=0.30,<1",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "phonenumbers>=9,<10",
+  "pydantic-settings>=2.8,<3",
+  "sqlalchemy[asyncio]>=2.0.38,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite>=0.21,<1",
+  "locust>=2.35,<3",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "ruff>=0.11,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live_llm: calls the configured Anthropic account"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+  "B008", # FastAPI dependency injection intentionally uses Depends() defaults.
+  "E501", # Ruff format handles code layout; prompt constants and SQL are intentionally long.
+]
