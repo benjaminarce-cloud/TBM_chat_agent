@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import styles from "./chat-widget.module.css";
 
 type Locale = "es" | "en";
@@ -10,11 +17,18 @@ type ChatMessage = {
   content: string;
   streaming?: boolean;
 };
-type SessionState = { id: string; token: string };
+type SessionState = { id: string; token: string; parentOrigin: string };
+type SessionStatus = "connecting" | "ready" | "error" | "rate-limited";
+type ConsentStatus = "idle" | "saving" | "accepted" | "error";
+type FeedbackState = {
+  messageId: string;
+  value: "up" | "down";
+  status: "saving" | "saved" | "error";
+};
 type ChatWidgetProps = {
   initialLocale: Locale;
   apiUrl: string;
-  parentOrigin: string;
+  parentOrigin?: string;
   parentPage?: string;
   referrer?: string;
   utm: Record<string, string | undefined>;
@@ -24,41 +38,91 @@ const NOTICE_VERSION = "pilot-placeholder-v0-legal-review-required";
 
 const copy = {
   es: {
-    greeting: "Hola, soy el asistente de TBM. ¿Qué necesitas transportar y entre qué ciudades?",
-    status: "Asistente de ventas • En línea",
+    greeting:
+      "Hola, ¿en qué puedo ayudarte? Puedes preguntarme sobre envíos, servicios o cómo contactar a TBM.",
+    statusReady: "Chat TBM • En línea",
+    statusConnecting: "Chat TBM • Conectando",
+    statusUnavailable: "Chat TBM • Sin conexión",
     placeholder: "Escribe tu mensaje…",
     send: "Enviar mensaje",
     connecting: "Conectando de forma segura…",
+    connectionTitle: "No pudimos conectar el chat",
+    connectionBody:
+      "Revisa tu conexión e inténtalo de nuevo. Si el problema continúa, contacta al equipo de TBM por el canal habitual.",
+    sessionRate:
+      "Se alcanzó el límite de conexiones. Espera un momento antes de volver a intentarlo.",
+    retry: "Reintentar conexión",
     error: "No pude completar esa respuesta. Un especialista de TBM puede continuar contigo.",
+    streamInterrupted: "La conexión se interrumpió. Puedes volver a intentarlo.",
+    emptyResponse: "No recibí una respuesta. Inténtalo de nuevo o solicita hablar con ventas.",
     rate: "Has enviado mensajes muy rápido. Espera un momento e inténtalo de nuevo.",
     noticeTitle: "Aviso de privacidad pendiente de revisión legal",
     notice:
       "[MARCADOR LEGAL — TBM/asesoría debe proporcionar el texto aprobado en español que cubra: finalidad de calificación y seguimiento; transferencia/almacenamiento en EE. UU.; minimización de datos; y contacto para derechos ARCO.]",
     accept: "Aceptar aviso piloto",
+    accepting: "Guardando aceptación…",
     accepted: "Aviso piloto aceptado",
+    consentError: "No se pudo guardar tu aceptación. Inténtalo de nuevo.",
     feedback: "¿Te ayudó esta respuesta?",
+    helpful: "Sí, fue útil",
+    notHelpful: "No fue útil",
+    feedbackThanks: "Gracias por tus comentarios.",
+    feedbackError: "No se pudo enviar. Inténtalo de nuevo.",
+    typing: "TBM está escribiendo",
+    ended: "Este chat llegó a su límite. Un especialista de TBM puede continuar contigo.",
+    disclaimer: "Piloto • TBM no proporciona tarifas en el chat",
     suggestions: ["Quiero solicitar una cotización", "Quiero hablar con ventas"],
   },
   en: {
-    greeting: "Hi, I’m TBM’s assistant. What do you need to ship, and between which cities?",
-    status: "Sales assistant • Online",
+    greeting:
+      "Hi, how can I help? Ask me about shipping, TBM services, or how to get in touch with the team.",
+    statusReady: "TBM chat • Online",
+    statusConnecting: "TBM chat • Connecting",
+    statusUnavailable: "TBM chat • Connection unavailable",
     placeholder: "Type your message…",
     send: "Send message",
     connecting: "Connecting securely…",
+    connectionTitle: "We couldn’t connect the chat",
+    connectionBody:
+      "Check your connection and try again. If the problem continues, contact the TBM team through the usual channel.",
+    sessionRate: "The connection limit was reached. Wait a moment before trying again.",
+    retry: "Retry connection",
     error: "I couldn’t complete that response. A TBM specialist can continue with you.",
+    streamInterrupted: "The connection was interrupted. You can try again.",
+    emptyResponse: "I didn’t receive a response. Try again or ask to speak with sales.",
     rate: "You’re sending messages too quickly. Wait a moment and try again.",
     noticeTitle: "Privacy notice pending legal review",
     notice:
       "[LEGAL PLACEHOLDER — TBM/counsel must provide approved English copy covering: qualification/follow-up purpose; US transfer/storage; data minimization; and an ARCO-rights contact.]",
     accept: "Accept pilot notice",
+    accepting: "Saving acceptance…",
     accepted: "Pilot notice accepted",
+    consentError: "We couldn’t save your acceptance. Please try again.",
     feedback: "Was this response helpful?",
+    helpful: "Yes, this was helpful",
+    notHelpful: "This was not helpful",
+    feedbackThanks: "Thanks for your feedback.",
+    feedbackError: "We couldn’t send it. Please try again.",
+    typing: "TBM is typing",
+    ended: "This chat reached its limit. A TBM specialist can continue with you.",
+    disclaimer: "Pilot • TBM does not provide rates in chat",
     suggestions: ["I want to request a quote", "I want to speak with sales"],
   },
 } as const;
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function exactOrigin(value: string | undefined, fallback: string) {
+  try {
+    const parsed = new URL(value ?? fallback);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.origin
+      : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export default function ChatWidget({
@@ -71,75 +135,142 @@ export default function ChatWidget({
 }: ChatWidgetProps) {
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("connecting");
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: makeId(), role: "assistant", content: copy[initialLocale].greeting },
   ]);
   const [draft, setDraft] = useState("");
-  const [consented, setConsented] = useState(false);
+  const [consentStatus, setConsentStatus] = useState<ConsentStatus>("idle");
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+  const [conversationEnded, setConversationEnded] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const text = copy[locale];
 
   useEffect(() => {
-    fetch(`${apiUrl}/api/session`, {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+    const embeddingOrigin =
+      window.self !== window.top ? exactOrigin(document.referrer, "") : "";
+    const resolvedParentOrigin =
+      embeddingOrigin || exactOrigin(parentOrigin, window.location.origin);
+
+    void fetch(`${apiUrl}/api/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         locale: initialLocale,
-        parent_origin: parentOrigin,
+        parent_origin: resolvedParentOrigin,
         source: {
           page: parentPage,
           referrer,
           utm,
         },
       }),
+      signal: controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error("session failed");
-        return response.json();
+        if (!response.ok) {
+          throw new Error(response.status === 429 ? "rate-limited" : "session-failed");
+        }
+        return response.json() as Promise<{ session_id: string; widget_token: string }>;
       })
-      .then((data) => setSession({ id: data.session_id, token: data.widget_token }))
-      .catch(() => setSession(null));
-  }, [apiUrl, initialLocale, parentOrigin, parentPage, referrer, utm]);
+      .then((data) => {
+        setSession({
+          id: data.session_id,
+          token: data.widget_token,
+          parentOrigin: resolvedParentOrigin,
+        });
+        setSessionStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted && error instanceof DOMException && error.name === "AbortError") {
+          setSessionStatus("error");
+          return;
+        }
+        setSessionStatus(
+          error instanceof Error && error.message === "rate-limited" ? "rate-limited" : "error",
+        );
+      })
+      .finally(() => window.clearTimeout(timeout));
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [apiUrl, initialLocale, parentOrigin, parentPage, referrer, sessionAttempt, utm]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, consented]);
+  }, [messages, consentStatus, requestError]);
 
   const latestAssistantId = useMemo(
     () => [...messages].reverse().find((message) => message.role === "assistant")?.id,
     [messages],
   );
 
+  const statusText =
+    sessionStatus === "ready"
+      ? text.statusReady
+      : sessionStatus === "connecting"
+        ? text.statusConnecting
+        : text.statusUnavailable;
+
   function authHeaders() {
     return {
       Authorization: `Bearer ${session?.token ?? ""}`,
       "Content-Type": "application/json",
-      "X-Widget-Origin": parentOrigin,
+      "X-Widget-Origin": session?.parentOrigin ?? "",
     };
   }
 
+  function changeLocale(nextLocale: Locale) {
+    setLocale(nextLocale);
+    setMessages((current) =>
+      current.length === 1 && current[0].role === "assistant"
+        ? [{ ...current[0], content: copy[nextLocale].greeting }]
+        : current,
+    );
+  }
+
+  function retrySession() {
+    setSession(null);
+    setSessionStatus("connecting");
+    setConsentStatus("idle");
+    setConversationEnded(false);
+    setRequestError(null);
+    setSessionAttempt((current) => current + 1);
+  }
+
   async function acceptConsent() {
-    if (!session || consented) return;
-    const response = await fetch(`${apiUrl}/api/session/${session.id}/consent`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({
-        notice_version: NOTICE_VERSION,
-        locale,
-        cross_border_ack: true,
-      }),
-    });
-    if (response.ok) setConsented(true);
+    if (!session || consentStatus === "saving" || consentStatus === "accepted") return;
+    setConsentStatus("saving");
+    try {
+      const response = await fetch(`${apiUrl}/api/session/${session.id}/consent`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          notice_version: NOTICE_VERSION,
+          locale,
+          cross_border_ack: true,
+        }),
+      });
+      if (!response.ok) throw new Error("consent-failed");
+      setConsentStatus("accepted");
+    } catch {
+      setConsentStatus("error");
+    }
   }
 
   async function sendMessage(value = draft) {
     const content = value.trim();
-    if (!content || !session || busy) return;
+    if (!content || !session || busy || conversationEnded) return;
     setDraft("");
     setBusy(true);
     setFeedback(null);
+    setRequestError(null);
     const assistantId = makeId();
     setMessages((current) => [
       ...current,
@@ -147,6 +278,7 @@ export default function ChatWidget({
       { id: assistantId, role: "assistant", content: "", streaming: true },
     ]);
 
+    let receivedText = "";
     try {
       const response = await fetch(`${apiUrl}/api/session/${session.id}/message`, {
         method: "POST",
@@ -154,57 +286,97 @@ export default function ChatWidget({
         body: JSON.stringify({ content }),
       });
       if (!response.ok || !response.body) {
-        throw new Error(response.status === 429 ? "rate" : "request");
+        throw new Error(response.status === 429 ? "rate-limited" : "request-failed");
       }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+
+      const processFrame = (frame: string) => {
+        const event = frame
+          .split("\n")
+          .find((line) => line.startsWith("event:"))
+          ?.slice(6)
+          .trim();
+        const rawData = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (!rawData) return;
+
+        const data = JSON.parse(rawData) as { text?: unknown; capped?: unknown };
+        if (event === "token" && typeof data.text === "string") {
+          receivedText += data.text;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: message.content + data.text }
+                : message,
+            ),
+          );
+        }
+        if (event === "done" && data.capped === true) {
+          setConversationEnded(true);
+        }
+      };
+
       while (true) {
         const { done, value: chunk } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+        buffer += decoder.decode(chunk, { stream: !done }).replace(/\r\n/g, "\n");
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const event = frame.match(/^event:\s*(.+)$/m)?.[1];
-          const data = frame.match(/^data:\s*(.+)$/m)?.[1];
-          if (event === "token" && data) {
-            const token = JSON.parse(data).text as string;
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: message.content + token }
-                  : message,
-              ),
-            );
-          }
-        }
+        frames.filter(Boolean).forEach(processFrame);
+        if (done) break;
       }
+      if (buffer.trim()) processFrame(buffer);
+
       setMessages((current) =>
         current.map((message) =>
-          message.id === assistantId ? { ...message, streaming: false } : message,
+          message.id === assistantId
+            ? {
+                ...message,
+                content: message.content || copy[locale].emptyResponse,
+                streaming: false,
+              }
+            : message,
         ),
       );
     } catch (error) {
-      const message = error instanceof Error && error.message === "rate" ? text.rate : text.error;
+      const isRateLimit = error instanceof Error && error.message === "rate-limited";
+      const fallbackMessage = isRateLimit ? copy[locale].rate : copy[locale].error;
       setMessages((current) =>
         current.map((item) =>
-          item.id === assistantId ? { ...item, content: message, streaming: false } : item,
+          item.id === assistantId
+            ? {
+                ...item,
+                content: item.content || fallbackMessage,
+                streaming: false,
+              }
+            : item,
         ),
       );
+      if (receivedText) setRequestError(copy[locale].streamInterrupted);
     } finally {
       setBusy(false);
     }
   }
 
-  async function sendFeedback(thumbs: "up" | "down") {
-    if (!session || feedback) return;
-    setFeedback(thumbs);
-    await fetch(`${apiUrl}/api/session/${session.id}/feedback`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ thumbs }),
-    }).catch(() => undefined);
+  async function sendFeedback(messageId: string, thumbs: "up" | "down") {
+    if (!session || feedback?.status === "saving") return;
+    setFeedback({ messageId, value: thumbs, status: "saving" });
+    try {
+      const response = await fetch(`${apiUrl}/api/session/${session.id}/feedback`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ thumbs }),
+      });
+      if (!response.ok) throw new Error("feedback-failed");
+      setFeedback({ messageId, value: thumbs, status: "saved" });
+    } catch {
+      setFeedback({ messageId, value: thumbs, status: "error" });
+    }
   }
 
   function onSubmit(event: FormEvent) {
@@ -213,34 +385,44 @@ export default function ChatWidget({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void sendMessage();
     }
   }
 
   return (
-    <main className={styles.widget}>
+    <main className={styles.widget} lang={locale}>
       <header className={styles.header}>
         <div className={styles.identity}>
           <span className={styles.mark}>TBM</span>
           <span>
             <strong>TBM Carriers</strong>
-            <small>{text.status}</small>
+            <small>
+              <span
+                className={`${styles.statusDot} ${sessionStatus === "ready" ? styles.online : ""}`}
+                aria-hidden="true"
+              />
+              {statusText}
+            </small>
           </span>
         </div>
         <div className={styles.localeSwitch} aria-label="Language / Idioma">
           <button
             type="button"
             className={locale === "es" ? styles.activeLocale : ""}
-            onClick={() => setLocale("es")}
+            onClick={() => changeLocale("es")}
+            aria-pressed={locale === "es"}
+            disabled={busy}
           >
             ES
           </button>
           <button
             type="button"
             className={locale === "en" ? styles.activeLocale : ""}
-            onClick={() => setLocale("en")}
+            onClick={() => changeLocale("en")}
+            aria-pressed={locale === "en"}
+            disabled={busy}
           >
             EN
           </button>
@@ -248,37 +430,82 @@ export default function ChatWidget({
       </header>
 
       <section className={styles.messages} aria-live="polite" aria-label="Conversation">
-        {!session && <p className={styles.connecting}>{text.connecting}</p>}
-        {messages.map((message, index) => (
-          <div
-            key={message.id}
-            className={`${styles.messageRow} ${styles[message.role]}`}
-          >
-            {message.role === "assistant" && <span className={styles.avatar}>T</span>}
+        {sessionStatus === "connecting" && (
+          <div className={styles.connecting} role="status">
+            <span className={styles.spinner} aria-hidden="true" />
+            {text.connecting}
+          </div>
+        )}
+
+        {(sessionStatus === "error" || sessionStatus === "rate-limited") && (
+          <div className={styles.connectionCard} role="alert">
+            <span className={styles.connectionIcon} aria-hidden="true">
+              !
+            </span>
             <div>
-              <div className={styles.bubble}>
-                {message.content || <span className={styles.typing} aria-label="Typing" />}
-              </div>
-              {message.id === latestAssistantId &&
-                !message.streaming &&
-                index > 0 &&
-                !feedback && (
-                  <div className={styles.feedback}>
-                    <span>{text.feedback}</span>
-                    <button type="button" onClick={() => void sendFeedback("up")} aria-label="Helpful">
-                      ↑
-                    </button>
-                    <button type="button" onClick={() => void sendFeedback("down")} aria-label="Not helpful">
-                      ↓
-                    </button>
-                  </div>
-                )}
+              <strong>{text.connectionTitle}</strong>
+              <p>
+                {sessionStatus === "rate-limited" ? text.sessionRate : text.connectionBody}
+              </p>
+              <button type="button" onClick={retrySession}>
+                {text.retry}
+              </button>
             </div>
           </div>
-        ))}
+        )}
 
-        {messages.length === 1 && session && (
-          <div className={styles.suggestions}>
+        {messages.map((message, index) => {
+          const messageFeedback = feedback?.messageId === message.id ? feedback : null;
+          return (
+            <div key={message.id} className={`${styles.messageRow} ${styles[message.role]}`}>
+              {message.role === "assistant" && <span className={styles.avatar}>T</span>}
+              <div>
+                <div className={styles.bubble}>
+                  {message.content || (
+                    <span className={styles.typing} role="status" aria-label={text.typing} />
+                  )}
+                </div>
+                {message.id === latestAssistantId && !message.streaming && index > 0 && (
+                  <div className={styles.feedback}>
+                    {messageFeedback?.status === "saved" ? (
+                      <span className={styles.feedbackResult}>✓ {text.feedbackThanks}</span>
+                    ) : (
+                      <>
+                        <span>{text.feedback}</span>
+                        <button
+                          type="button"
+                          onClick={() => void sendFeedback(message.id, "up")}
+                          aria-label={text.helpful}
+                          aria-pressed={messageFeedback?.value === "up"}
+                          className={messageFeedback?.value === "up" ? styles.selectedFeedback : ""}
+                          disabled={messageFeedback?.status === "saving"}
+                        >
+                          <span aria-hidden="true">↑</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void sendFeedback(message.id, "down")}
+                          aria-label={text.notHelpful}
+                          aria-pressed={messageFeedback?.value === "down"}
+                          className={messageFeedback?.value === "down" ? styles.selectedFeedback : ""}
+                          disabled={messageFeedback?.status === "saving"}
+                        >
+                          <span aria-hidden="true">↓</span>
+                        </button>
+                        {messageFeedback?.status === "error" && (
+                          <span className={styles.inlineError}>{text.feedbackError}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {messages.length === 1 && sessionStatus === "ready" && (
+          <div className={styles.suggestions} aria-label="Suggested messages">
             {text.suggestions.map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => void sendMessage(suggestion)}>
                 {suggestion}
@@ -287,7 +514,13 @@ export default function ChatWidget({
           </div>
         )}
 
-        {!consented ? (
+        {requestError && (
+          <p className={styles.requestError} role="alert">
+            {requestError}
+          </p>
+        )}
+
+        {consentStatus !== "accepted" ? (
           <aside className={styles.consent} aria-labelledby="consent-title">
             <div>
               <span className={styles.shield} aria-hidden="true">
@@ -298,12 +531,27 @@ export default function ChatWidget({
                 <p>{text.notice}</p>
               </div>
             </div>
-            <button type="button" onClick={() => void acceptConsent()} disabled={!session}>
-              {text.accept}
+            {consentStatus === "error" && (
+              <p className={styles.consentError} role="alert">
+                {text.consentError}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => void acceptConsent()}
+              disabled={!session || consentStatus === "saving"}
+            >
+              {consentStatus === "saving" ? text.accepting : text.accept}
             </button>
           </aside>
         ) : (
           <p className={styles.accepted}>✓ {text.accepted}</p>
+        )}
+
+        {conversationEnded && (
+          <p className={styles.ended} role="status">
+            {text.ended}
+          </p>
         )}
         <div ref={bottomRef} />
       </section>
@@ -313,16 +561,20 @@ export default function ChatWidget({
           value={draft}
           onChange={(event) => setDraft(event.target.value.slice(0, 2000))}
           onKeyDown={onKeyDown}
-          placeholder={text.placeholder}
+          placeholder={conversationEnded ? text.ended : text.placeholder}
           aria-label={text.placeholder}
           rows={1}
-          disabled={!session || busy}
+          disabled={!session || busy || conversationEnded}
         />
-        <button type="submit" disabled={!draft.trim() || !session || busy} aria-label={text.send}>
-          ↑
+        <button
+          type="submit"
+          disabled={!draft.trim() || !session || busy || conversationEnded}
+          aria-label={text.send}
+        >
+          <span aria-hidden="true">↑</span>
         </button>
       </form>
-      <p className={styles.disclaimer}>Pilot • TBM does not provide prices in chat</p>
+      <p className={styles.disclaimer}>{text.disclaimer}</p>
     </main>
   );
 }

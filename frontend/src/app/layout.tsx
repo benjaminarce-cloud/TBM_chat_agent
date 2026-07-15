@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "TBM Carriers Chat Pilot",
-  description: "Standalone bilingual inbound freight sales chat pilot for TBM Carriers.",
+  description:
+    "Standalone bilingual TBM chat pilot for freight questions, navigation, and sales support.",
   robots: { index: false, follow: false },
 };
 

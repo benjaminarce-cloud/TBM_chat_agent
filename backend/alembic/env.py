@@ -11,7 +11,11 @@ from app.models import Base
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+settings = get_settings()
+# Neon recommends a direct connection for schema migration tools; runtime traffic uses pooling.
+config.set_main_option(
+    "sqlalchemy.url", settings.database_url_unpooled or settings.database_url
+)
 target_metadata = Base.metadata
 
 

@@ -7,13 +7,13 @@
   script.dataset.tbmLoaded = "true";
 
   var scriptOrigin = new URL(script.src, window.location.href).origin;
-  var apiUrl = script.dataset.apiUrl || "http://localhost:8000";
-  var widgetUrl = new URL(script.dataset.widgetUrl || "/widget", scriptOrigin);
+  var widgetUrl = new URL("/widget", scriptOrigin);
   var locale = script.dataset.locale === "en" ? "en" : "es";
   var accent = script.dataset.accent || "#ff5a36";
   var pageUrl = new URL(window.location.href);
 
-  widgetUrl.searchParams.set("apiUrl", apiUrl);
+  if (window.CSS && !window.CSS.supports("color", accent)) accent = "#ff5a36";
+
   widgetUrl.searchParams.set("parentOrigin", window.location.origin);
   widgetUrl.searchParams.set("parentPage", pageUrl.toString());
   widgetUrl.searchParams.set("referrer", document.referrer || "");
@@ -30,7 +30,9 @@
   frame.title = locale === "en" ? "Chat with TBM Carriers" : "Chatea con TBM Carriers";
   frame.setAttribute("allow", "clipboard-write");
   frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
-  frame.referrerPolicy = "no-referrer";
+  frame.setAttribute("aria-hidden", "true");
+  frame.tabIndex = -1;
+  frame.referrerPolicy = "strict-origin";
   frame.style.cssText = [
     "position:fixed",
     "right:22px",
@@ -42,18 +44,19 @@
     "box-shadow:0 24px 80px rgba(9,31,34,.24),0 6px 18px rgba(9,31,34,.12)",
     "background:#fff",
     "z-index:2147483646",
+    "visibility:hidden",
     "opacity:0",
     "transform:translateY(14px) scale(.98)",
     "transform-origin:bottom right",
     "pointer-events:none",
-    "transition:opacity .18s ease,transform .18s ease",
+    "transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s",
   ].join(";");
 
   var button = document.createElement("button");
   button.type = "button";
   button.setAttribute("aria-label", locale === "en" ? "Open TBM chat" : "Abrir chat de TBM");
   button.setAttribute("aria-expanded", "false");
-  button.textContent = locale === "en" ? "Chat  ↗" : "Chat  ↗";
+  button.textContent = "Chat  ↗";
   button.style.cssText = [
     "position:fixed",
     "right:22px",
@@ -85,19 +88,29 @@
           ? "Open TBM chat"
           : "Abrir chat de TBM",
     );
-    button.textContent = open ? "Close  ×" : "Chat  ↗";
+    button.textContent = open ? (locale === "en" ? "Close  ×" : "Cerrar  ×") : "Chat  ↗";
+    frame.style.visibility = open ? "visible" : "hidden";
     frame.style.opacity = open ? "1" : "0";
     frame.style.transform = open ? "translateY(0) scale(1)" : "translateY(14px) scale(.98)";
     frame.style.pointerEvents = open ? "auto" : "none";
+    frame.style.transitionDelay = open ? "0s" : "0s,0s,.18s";
+    frame.setAttribute("aria-hidden", String(!open));
+    frame.tabIndex = open ? 0 : -1;
     if (open) frame.focus();
   }
+
   button.addEventListener("click", function () {
     setOpen(!open);
   });
-  document.querySelectorAll("[data-tbm-chat-open]").forEach(function (trigger) {
-    trigger.addEventListener("click", function () {
-      setOpen(true);
-    });
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (target instanceof Element && target.closest("[data-tbm-chat-open]")) setOpen(true);
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && open) {
+      setOpen(false);
+      button.focus();
+    }
   });
 
   var media = window.matchMedia("(max-width: 560px)");
@@ -123,6 +136,11 @@
   sizeForMobile(media);
   media.addEventListener("change", sizeForMobile);
 
-  document.body.appendChild(frame);
-  document.body.appendChild(button);
+  function mount() {
+    document.body.appendChild(frame);
+    document.body.appendChild(button);
+  }
+
+  if (document.body) mount();
+  else document.addEventListener("DOMContentLoaded", mount, { once: true });
 })();

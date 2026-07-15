@@ -146,6 +146,10 @@ The purge job removes transcripts, leads, consents/IP hashes, and session source
 when a session has no captured lead or has a disqualified lead. Qualified/converted sales data is
 retained under TBM's approved sales retention policy.
 
+For Neon, `DATABASE_URL` should be the pooled application connection and
+`DATABASE_URL_UNPOOLED` the direct migration connection. Provider-standard URLs are normalized for
+SQLAlchemy/asyncpg at runtime, and Alembic automatically prefers the unpooled URL.
+
 ## Analytics views
 
 After `alembic upgrade head`, query:

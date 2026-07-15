@@ -5,10 +5,12 @@
   --paper: #fff;
   --warm: #f7f4ed;
   --accent: #ff5a36;
+  width: 100%;
+  height: 100svh;
   height: 100dvh;
-  min-height: 520px;
+  min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   overflow: hidden;
   color: var(--ink);
   background: var(--paper);
@@ -16,7 +18,7 @@
 }
 
 .header {
-  height: 74px;
+  min-height: 68px;
   padding: 0 18px;
   display: flex;
   align-items: center;
@@ -54,10 +56,24 @@
 }
 
 .identity small {
-  position: relative;
   margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #b0bbba;
+}
+
+.statusDot.online {
+  background: #2a956c;
+  box-shadow: 0 0 0 3px rgba(42, 149, 108, 0.12);
 }
 
 .localeSwitch {
@@ -80,6 +96,11 @@
   cursor: pointer;
 }
 
+.localeSwitch button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .localeSwitch .activeLocale {
   color: var(--ink);
   background: white;
@@ -87,6 +108,7 @@
 }
 
 .messages {
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 20px 16px 16px;
@@ -97,10 +119,76 @@
 }
 
 .connecting {
-  margin-bottom: 12px;
+  margin: 0 auto 16px;
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: 11px;
   text-align: center;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #d5dcda;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.connectionCard {
+  margin: 0 0 18px;
+  padding: 14px;
+  display: flex;
+  gap: 11px;
+  border: 1px solid #e9c8be;
+  border-radius: 13px;
+  color: #623d35;
+  background: #fff8f5;
+}
+
+.connectionIcon {
+  flex: 0 0 auto;
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #b84d35;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.connectionCard strong {
+  display: block;
+  font-size: 12px;
+}
+
+.connectionCard p {
+  margin-top: 5px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.connectionCard button {
+  margin-top: 9px;
+  padding: 7px 10px;
+  border: 1px solid #d7a99c;
+  border-radius: 7px;
+  color: #713928;
+  background: white;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .messageRow {
@@ -129,7 +217,7 @@
 }
 
 .bubble {
-  max-width: 296px;
+  max-width: min(296px, calc(100vw - 78px));
   padding: 11px 13px;
   border: 1px solid var(--line);
   border-radius: 4px 15px 15px 15px;
@@ -205,6 +293,46 @@
   cursor: pointer;
 }
 
+.feedback button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.feedback .selectedFeedback {
+  color: white;
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+.feedbackResult {
+  color: #42705f;
+  font-weight: 700;
+}
+
+.inlineError {
+  width: 100%;
+  color: #a34430;
+}
+
+.requestError,
+.ended {
+  margin: 0 0 14px 33px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.requestError {
+  color: #854331;
+  background: #fff3ef;
+}
+
+.ended {
+  color: #355d51;
+  background: #edf6f2;
+}
+
 .consent {
   margin: 8px 0 12px;
   padding: 13px;
@@ -241,6 +369,13 @@
   color: #765950;
   font-size: 9.5px;
   line-height: 1.45;
+}
+
+.consent .consentError {
+  margin: 9px 0 0;
+  color: #a33e29;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .consent button {
@@ -298,6 +433,11 @@
   box-shadow: 0 0 0 3px rgba(16, 42, 45, 0.07);
 }
 
+.composer textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .composer textarea::placeholder {
   color: #8a999b;
 }
@@ -321,7 +461,7 @@
 }
 
 .disclaimer {
-  padding: 0 12px 8px;
+  padding: 0 12px max(8px, env(safe-area-inset-bottom));
   color: #8b9899;
   background: white;
   font-size: 9px;
@@ -330,12 +470,7 @@
 }
 
 @media (max-width: 420px) {
-  .widget {
-    min-height: 100dvh;
-  }
-
   .header {
-    height: 68px;
     padding: 0 14px;
   }
 
@@ -343,13 +478,29 @@
     padding-inline: 12px;
   }
 
-  .bubble {
-    max-width: min(296px, calc(100vw - 72px));
+  .composer {
+    padding-inline: 10px;
+  }
+}
+
+@media (max-height: 520px) {
+  .header {
+    min-height: 58px;
+  }
+
+  .mark {
+    width: 35px;
+    height: 35px;
+  }
+
+  .messages {
+    padding-top: 14px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .typing {
+  .typing,
+  .spinner {
     animation: none;
   }
 }

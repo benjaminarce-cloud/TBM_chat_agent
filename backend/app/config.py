@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/tbm_chat"
+    database_url_unpooled: str | None = None
     anthropic_api_key: str = ""
     anthropic_sonnet_model: str = "claude-sonnet-4-5"
     anthropic_haiku_model: str = "claude-haiku-4-5"
@@ -49,6 +51,30 @@ class Settings(BaseSettings):
 
     kb_compiled_path: Path = Path(__file__).resolve().parents[1] / "kb" / "compiled.md"
     kb_version_path: Path = Path(__file__).resolve().parents[1] / "kb" / "VERSION"
+
+    @field_validator("database_url", "database_url_unpooled", mode="before")
+    @classmethod
+    def normalize_postgres_url_for_asyncpg(cls, value: str | None) -> str | None:
+        """Adapt provider-standard libpq URLs to SQLAlchemy's asyncpg dialect."""
+        if not value:
+            return value
+        parts = urlsplit(value)
+        if parts.scheme not in {"postgres", "postgresql", "postgresql+asyncpg"}:
+            return value
+        query: list[tuple[str, str]] = []
+        for key, item in parse_qsl(parts.query, keep_blank_values=True):
+            if key == "channel_binding":
+                continue
+            query.append(("ssl" if key == "sslmode" else key, item))
+        return urlunsplit(
+            (
+                "postgresql+asyncpg",
+                parts.netloc,
+                parts.path,
+                urlencode(query),
+                parts.fragment,
+            )
+        )
 
     @property
     def widget_origins(self) -> set[str]:

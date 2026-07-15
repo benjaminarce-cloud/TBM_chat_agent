@@ -1,8 +1,6 @@
 import Script from "next/script";
 import styles from "./page.module.css";
 
-const apiUrl = process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://localhost:8000";
-
 export default function Home() {
   return (
     <main className={styles.siteShell}>
@@ -35,8 +33,9 @@ export default function Home() {
           <em>Your answers should too.</em>
         </h1>
         <p>
-          This standalone page demonstrates the TBM bilingual inbound sales agent in the
-          same one-script format used on a host website.
+          This standalone page demonstrates the TBM bilingual chat in the same one-script
+          format used on a host website, helping visitors with questions, navigation, and
+          sales support.
         </p>
         <div className={styles.heroActions}>
           <button
@@ -89,8 +88,6 @@ export default function Home() {
       <Script
         src="/embed.js"
         strategy="afterInteractive"
-        data-api-url={apiUrl}
-        data-widget-url="/widget"
         data-locale="es"
         data-accent="#ff5a36"
       />
