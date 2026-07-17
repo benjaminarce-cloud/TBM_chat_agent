@@ -49,7 +49,12 @@ jobs:
         working-directory: backend
       - run: docker build --tag tbm-chat:test .
         working-directory: backend
-      - run: docker run --rm tbm-chat:test python -m app.jobs.browser_smoke
+      # GitHub's nested Docker runtime blocks Chromium's user namespace sandbox. This
+      # smoke opens only about:blank; production keeps the browser sandbox enabled.
+      - run: >-
+          docker run --rm
+          --env BROWSER_SMOKE_CHROMIUM_SANDBOX=false
+          tbm-chat:test python -m app.jobs.browser_smoke
         working-directory: backend
 
   frontend:

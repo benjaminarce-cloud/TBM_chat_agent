@@ -7,10 +7,15 @@ from playwright.async_api import async_playwright
 
 
 async def main() -> None:
+    chromium_sandbox = os.getenv("BROWSER_SMOKE_CHROMIUM_SANDBOX", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(
             headless=True,
-            chromium_sandbox=True,
+            chromium_sandbox=chromium_sandbox,
             executable_path=os.getenv("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH") or None,
             env={},
             args=["--disable-extensions", "--disable-file-system"],
