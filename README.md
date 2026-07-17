@@ -201,11 +201,19 @@ locust -f tests/load/locustfile.py --host http://localhost:8000
 cd ../frontend
 npm run lint
 npm run build
+npx playwright install chromium
+npm run test:e2e
+
+# Runs a bounded smoke test against a deployed widget and creates no lead/contact record
+E2E_LIVE_URL=https://frontend-nine-delta-71.vercel.app npm run test:e2e:live
 ```
 
 The deterministic suite includes strict extraction-schema fixtures, pricing pivots and output
-blocking, consent denial, signed token scope, token-bucket behavior, and the message cap. Live LLM
-evals are kept opt-in so CI is deterministic and cannot create unbounded model spend.
+blocking, consent denial, signed token scope, token-bucket behavior, the message cap, and mocked-API
+browser flows for bilingual sales intake, quote rendering, pricing safety, and mobile overflow. Live
+LLM evals are kept opt-in so CI is deterministic and cannot create unbounded model spend. The live
+widget smoke workflow runs after successful Vercel deployments and can also be started manually;
+it accepts the pilot notice and sends only the sales shortcut, without contact details.
 
 ## Deployment map
 
