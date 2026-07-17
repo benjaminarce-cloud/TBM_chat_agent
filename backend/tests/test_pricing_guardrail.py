@@ -8,6 +8,7 @@ from app.services.safety import (
     closing_handoff,
     contains_price_value,
     forced_response,
+    human_handoff,
     is_closing_reply,
     preserve_contact_context,
 )
@@ -102,3 +103,24 @@ def test_qualification_answers_are_not_mistaken_for_closing_replies(content: str
 def test_closing_handoff_confirms_sales_follow_up_in_both_languages() -> None:
     assert "sales team" in closing_handoff("en")
     assert "equipo de ventas" in closing_handoff("es")
+
+
+@pytest.mark.parametrize(
+    ("locale", "sales_label", "contact_options"),
+    [
+        ("en", "sales specialist", ("email", "phone")),
+        ("es", "especialista de ventas", ("correo electrónico", "teléfono")),
+    ],
+)
+def test_human_handoff_uses_conversational_sales_intake_copy(
+    locale: str, sales_label: str, contact_options: tuple[str, str]
+) -> None:
+    response = human_handoff(locale).lower()
+    assert sales_label in response
+    assert all(option in response for option in contact_options)
+    assert response.endswith("?")
+
+    forced = forced_response(
+        TurnAnalysis(intent="human_request", escalate=True, extracted={}), locale
+    )
+    assert forced == human_handoff(locale)

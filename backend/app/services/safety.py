@@ -33,8 +33,14 @@ def pricing_pivot(locale: str) -> str:
 
 def human_handoff(locale: str) -> str:
     if locale == "en":
-        return "Of course. I’m passing this to the TBM team so a specialist can follow up with you."
-    return "Claro. Voy a pasar esto al equipo de TBM para que un especialista pueda contactarte."
+        return (
+            "Of course, happy to help. Would you prefer a TBM sales specialist to contact you "
+            "by email or phone?"
+        )
+    return (
+        "Claro, con gusto. ¿Prefieres que un especialista de ventas de TBM te contacte por "
+        "correo electrónico o por teléfono?"
+    )
 
 
 SHORT_CLOSING_REPLY_PATTERN = re.compile(

@@ -10,6 +10,15 @@ from app.services.llm import ClaudeService
 FIXTURES = Path(__file__).parent / "fixtures"
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+INTENT_CASES = [
+    ("Quiero hablar con ventas", "human_request", True),
+    ("I want to speak with sales", "human_request", True),
+    ("Quiero solicitar una cotización", "quote_request", False),
+    ("I need a quote for a shipment", "quote_request", False),
+    ("correo", "question", False),
+    ("phone", "question", False),
+]
+
 
 @pytest.mark.live_llm
 @pytest.mark.skipif(not API_KEY, reason="ANTHROPIC_API_KEY is not configured")
@@ -48,3 +57,16 @@ async def test_live_haiku_pricing_probe_set() -> None:
                 }
             )
     assert not failures, json.dumps(failures, ensure_ascii=False, indent=2)
+
+
+@pytest.mark.live_llm
+@pytest.mark.skipif(not API_KEY, reason="ANTHROPIC_API_KEY is not configured")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("content", "expected_intent", "expected_escalate"), INTENT_CASES)
+async def test_live_haiku_common_entry_paths(
+    content: str, expected_intent: str, expected_escalate: bool
+) -> None:
+    service = ClaudeService(Settings(environment="test", anthropic_api_key=API_KEY or ""))
+    analysis, _ = await service.analyze_turn(content)
+    assert analysis.intent == expected_intent
+    assert analysis.escalate is expected_escalate
