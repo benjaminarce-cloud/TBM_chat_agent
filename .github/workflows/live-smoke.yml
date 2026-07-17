@@ -24,7 +24,9 @@ jobs:
       contains(github.event.deployment_status.environment_url, 'vercel.app'))
     runs-on: ubuntu-latest
     env:
-      E2E_LIVE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.widget_url || github.event.deployment_status.environment_url }}
+      # Vercel preview URLs require SSO. Deployment events trigger this check, but the
+      # browser targets the public pilot alias unless a manual run supplies another URL.
+      E2E_LIVE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.widget_url || 'https://frontend-nine-delta-71.vercel.app' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
