@@ -1,0 +1,5 @@
+# Playwright is installed separately in the Alpine image because PyPI publishes
+# its Python wheel with a manylinux tag, while the runtime uses Alpine's system
+# Chromium and Node.js.
+playwright==1.61.0 \
+    --hash=sha256:54f3b39f6eab832e33458c1dd7da0b5682aedab3b09ae731b5c59fa12fd2024e

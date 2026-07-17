@@ -4,10 +4,14 @@ ENV PIP_NO_CACHE_DIR=1 PATH=/opt/venv/bin:$PATH
 WORKDIR /build
 
 RUN apk add --no-cache build-base cargo
-COPY requirements.lock requirements-build.lock ./
+COPY requirements.lock requirements-build.lock requirements-playwright-alpine.lock ./
 RUN python -m venv /opt/venv \
     && pip install --require-hashes -r requirements-build.lock \
     && pip install --no-build-isolation --require-hashes -r requirements.lock \
+    && pip install --no-deps --require-hashes \
+        --target /opt/venv/lib/python3.12/site-packages \
+        --platform manylinux1_x86_64 --implementation cp --python-version 3.12 \
+        --only-binary=:all: -r requirements-playwright-alpine.lock \
     && pip uninstall -y maturin \
     && pip check
 
