@@ -25,9 +25,9 @@ personal Vercel, Railway, and Neon accounts during the pilot.
 
 These are deliberately not filled in by the implementation:
 
-1. **Privacy copy:** TBM/counsel must provide the approved `PRIVACY_NOTICE_ES`,
-   `PRIVACY_NOTICE_EN`, and matching `PRIVACY_NOTICE_VERSION` in both deployments. Production
-   startup/build fails if the approved version or copy is missing.
+1. **Privacy copy:** the checked-in values are an internal pilot draft only. TBM/counsel must
+   replace `PRIVACY_NOTICE_ES`, `PRIVACY_NOTICE_EN`, and `PRIVACY_NOTICE_VERSION` with approved
+   copy before any public use. Production startup/build fails if the version or copy is missing.
 2. **Knowledge base:** TBM must provide and approve service, coverage, lane, FAQ, and objection
    content. The compiler currently emits a no-approved-facts marker rather than inventing claims.
 3. **Handoff routing:** the pilot includes a **Resend** adapter, but TBM must approve the sender and
@@ -119,7 +119,7 @@ violates its prompt.
 - The first transition to captured sends one Resend handoff and fires `lead_captured` and
   `handoff_sent` events. Missing email configuration records `handoff_pending_config` instead.
 
-The checked-in development notice is not legal advice and cannot be used in production. Managed
+The checked-in pilot notice is not legal advice and cannot be used for public launch. Managed
 Postgres provides at-rest encryption; backend production startup rejects non-TLS database URLs and
 non-HTTPS widget/parent origins.
 
@@ -156,8 +156,9 @@ those values are operational telemetry and are never exposed to visitors.
 The purge job deletes all transcript text and page context after `TRANSCRIPT_RETENTION_DAYS`
 (90 by default). It deletes leads, consents/IP hashes, and source data after
 `UNCAPTURED_RETENTION_DAYS` (90) for uncaptured/disqualified sessions and after
-`CAPTURED_LEAD_RETENTION_DAYS` (365) for captured leads. Migration `0002` purges legacy pilot data
-because the old UI displayed placeholder legal copy and could not prove approved consent.
+`CAPTURED_LEAD_RETENTION_DAYS` (365) for captured leads. Migration `0002` preserves legacy pilot
+data for this internal test, but the new consent gate does not treat its old notice versions as
+current consent.
 
 For Neon, `DATABASE_URL` should be the pooled application connection and
 `DATABASE_URL_UNPOOLED` the direct migration connection. Provider-standard URLs are normalized for

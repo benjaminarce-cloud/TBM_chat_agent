@@ -13,18 +13,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # The legacy UI explicitly displayed placeholder legal copy and the API accepted
-    # caller-selected versions, so no legacy record can prove acceptance of an approved notice.
-    op.execute("DELETE FROM messages")
-    op.execute("DELETE FROM leads")
-    op.execute("DELETE FROM consents")
-    op.execute("UPDATE sessions SET source = NULL")
-    op.create_check_constraint("consents_ack_required", "consents", "cross_border_ack = true")
-    op.create_unique_constraint(
-        "uq_consents_session_notice", "consents", ["session_id", "notice_version"]
+    # Preserve legacy pilot records for inspection. They cannot satisfy the new route's
+    # current-notice lookup because their notice_version is not the deployed version.
+    # NOT VALID keeps historical false acknowledgements while enforcing the rule for new rows.
+    op.execute(
+        "ALTER TABLE consents ADD CONSTRAINT consents_ack_required "
+        "CHECK (cross_border_ack = true) NOT VALID"
     )
+    # A session lock makes the current-consent insert idempotent without rejecting any
+    # duplicate legacy records that may already exist.
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_consents_session_notice", "consents", type_="unique")
     op.drop_constraint("consents_ack_required", "consents", type_="check")
