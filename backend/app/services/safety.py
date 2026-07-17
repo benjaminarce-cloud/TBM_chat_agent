@@ -37,6 +37,38 @@ def human_handoff(locale: str) -> str:
     return "Claro. Voy a pasar esto al equipo de TBM para que un especialista pueda contactarte."
 
 
+SHORT_CLOSING_REPLY_PATTERN = re.compile(
+    r"^(?:"
+    r"no(?:pe)?(?:\s*[,;:]?\s*(?:gracias|thanks|thank\s+you))?|"
+    r"(?:eso|esto|ya)\s+es\s+todo|"
+    r"nada\s+m[aá]s|"
+    r"(?:con\s+eso\s+)?(?:estoy|estamos)\s+bien|"
+    r"that(?:'s|\s+is)\s+all|"
+    r"nothing\s+else|"
+    r"(?:i(?:'m|\s+am)\s+)?all\s+set"
+    r")[.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def is_closing_reply(content: str) -> bool:
+    """Recognize a short decline after qualification without matching longer answers."""
+    normalized = " ".join(content.strip().split())
+    return bool(SHORT_CLOSING_REPLY_PATTERN.fullmatch(normalized))
+
+
+def closing_handoff(locale: str) -> str:
+    if locale == "en":
+        return (
+            "It was a pleasure helping you. A member of the TBM sales team will contact you "
+            "shortly to continue with your request."
+        )
+    return (
+        "Fue un placer ayudarte. Un miembro del equipo de ventas de TBM te contactará en breve "
+        "para continuar con tu solicitud."
+    )
+
+
 def off_topic_redirect(locale: str) -> str:
     if locale == "en":
         return (

@@ -5,8 +5,10 @@ import pytest
 
 from app.schemas import TurnAnalysis
 from app.services.safety import (
+    closing_handoff,
     contains_price_value,
     forced_response,
+    is_closing_reply,
     preserve_contact_context,
 )
 
@@ -70,3 +72,33 @@ def test_short_contact_reply_is_not_lost_as_off_topic(content: str, method: str)
         or "teléfono" in response.lower()
         or "whatsapp" in response.lower()
     )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "no",
+        "No, gracias.",
+        "eso es todo",
+        "nada más",
+        "no thanks",
+        "No, thank you.",
+        "nothing else",
+        "that's all",
+    ],
+)
+def test_short_closing_replies_are_recognized(content: str) -> None:
+    assert is_closing_reply(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["no tengo correo", "no sé la fecha", "nothing else is ready", "all set for Monday"],
+)
+def test_qualification_answers_are_not_mistaken_for_closing_replies(content: str) -> None:
+    assert not is_closing_reply(content)
+
+
+def test_closing_handoff_confirms_sales_follow_up_in_both_languages() -> None:
+    assert "sales team" in closing_handoff("en")
+    assert "equipo de ventas" in closing_handoff("es")

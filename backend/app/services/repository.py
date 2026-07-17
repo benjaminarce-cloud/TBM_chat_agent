@@ -89,6 +89,12 @@ async def get_history(db: AsyncSession, session_id: uuid.UUID, limit: int = 12) 
     return [{"role": row.role, "content": row.content[:4000]} for row in rows]
 
 
+async def get_lead(db: AsyncSession, session_id: uuid.UUID) -> Lead | None:
+    return await db.scalar(
+        select(Lead).where(Lead.session_id == session_id).order_by(Lead.created_at).limit(1)
+    )
+
+
 async def upsert_lead_fields(
     db: AsyncSession, session_id: uuid.UUID, extracted: dict, notice_version: str
 ) -> LeadUpsertResult:
@@ -99,9 +105,7 @@ async def upsert_lead_fields(
             None, consented=consent is not None, newly_captured=False, changed_fields=[]
         )
 
-    lead = await db.scalar(
-        select(Lead).where(Lead.session_id == session_id).order_by(Lead.created_at).limit(1)
-    )
+    lead = await get_lead(db, session_id)
     if lead is None:
         lead = Lead(session_id=session_id, consent_id=consent.id)
         db.add(lead)

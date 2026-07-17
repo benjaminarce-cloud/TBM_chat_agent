@@ -38,6 +38,7 @@ from app.services.rate_limit import consume
 from app.services.repository import (
     active_consent,
     get_history,
+    get_lead,
     lead_is_captured,
     lock_session,
     persist_message_if_consented,
@@ -46,8 +47,10 @@ from app.services.repository import (
 )
 from app.services.safety import (
     capped_handoff,
+    closing_handoff,
     contains_price_value,
     forced_response,
+    is_closing_reply,
     preserve_contact_context,
     pricing_pivot,
     safe_failure,
@@ -354,6 +357,32 @@ async def _capped_stream(
     yield _sse("done", {"capped": True})
 
 
+async def _closing_stream(
+    session_id: uuid.UUID, locale: str, started: float, settings: Settings
+) -> AsyncIterator[bytes]:
+    text_value = closing_handoff(locale)
+    yield _sse("token", {"text": text_value})
+    elapsed = int((time.perf_counter() - started) * 1000)
+    async with SessionLocal() as db:
+        await persist_message_if_consented(
+            db,
+            session_id,
+            "assistant",
+            text_value,
+            settings.privacy_notice_version,
+            elapsed,
+        )
+        await record_event(db, session_id, "first_token", {"latency_ms": elapsed})
+        await record_event(
+            db,
+            session_id,
+            "conversation_closed",
+            {"reason": "visitor_declined_more_help", "lead_captured": True},
+        )
+        await db.commit()
+    yield _sse("done", {"closed": True})
+
+
 @router.post("/session/{session_id}/message")
 async def message(
     session_id: uuid.UUID,
@@ -403,7 +432,10 @@ async def message(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    should_cap = should_cap_after_increment(
+    should_close = lead_is_captured(await get_lead(db, session_id)) and is_closing_reply(
+        body.content
+    )
+    should_cap = not should_close and should_cap_after_increment(
         chat_session.message_count, settings.session_message_cap
     )
     chat_session.message_count += 1
@@ -420,6 +452,13 @@ async def message(
     if should_cap:
         return StreamingResponse(
             _capped_stream(session_id, locale, started),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    if should_close:
+        return StreamingResponse(
+            _closing_stream(session_id, locale, started, settings),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
