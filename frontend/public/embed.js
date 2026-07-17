@@ -12,15 +12,30 @@
   var accent = script.dataset.accent || "#ff5a36";
   var pageUrl = new URL(window.location.href);
 
+  function safePageContext(value) {
+    if (!value) return "";
+    try {
+      var parsed = new URL(value, window.location.origin);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      var path = parsed.pathname.slice(0, 300);
+      if (/@|\d[\d(). +\-]{7,}\d/.test(path)) path = "/";
+      return parsed.origin + path;
+    } catch {
+      return "";
+    }
+  }
+
   if (window.CSS && !window.CSS.supports("color", accent)) accent = "#ff5a36";
 
   widgetUrl.searchParams.set("parentOrigin", window.location.origin);
-  widgetUrl.searchParams.set("parentPage", pageUrl.toString());
-  widgetUrl.searchParams.set("referrer", document.referrer || "");
-  ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].forEach(
+  widgetUrl.searchParams.set("parentPage", safePageContext(pageUrl.toString()));
+  widgetUrl.searchParams.set("referrer", safePageContext(document.referrer));
+  ["utm_source", "utm_medium", "utm_campaign"].forEach(
     function (key) {
       var value = pageUrl.searchParams.get(key);
-      if (value) widgetUrl.searchParams.set(key, value);
+      if (value && !/@|\d[\d(). +\-]{7,}\d/.test(value)) {
+        widgetUrl.searchParams.set(key, value.slice(0, 120));
+      }
     },
   );
   widgetUrl.searchParams.set("locale", locale);

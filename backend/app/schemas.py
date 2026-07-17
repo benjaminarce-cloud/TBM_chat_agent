@@ -26,7 +26,7 @@ class SessionCreated(BaseModel):
 class ConsentCreate(BaseModel):
     notice_version: str = Field(min_length=1, max_length=80)
     locale: Literal["es", "en"]
-    cross_border_ack: bool
+    cross_border_ack: Literal[True]
 
 
 class MessageCreate(BaseModel):
@@ -43,6 +43,11 @@ class MessageCreate(BaseModel):
 
 class FeedbackCreate(BaseModel):
     thumbs: Literal["up", "down"]
+
+
+class ComputerUseCreate(BaseModel):
+    task: str = Field(min_length=1, max_length=2000)
+    start_url: str = Field(min_length=1, max_length=500)
 
 
 class LeadExtraction(BaseModel):

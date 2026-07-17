@@ -195,7 +195,7 @@
   width: 100%;
   margin-bottom: 15px;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -214,19 +214,23 @@
   background: var(--ink);
   font-family: Georgia, serif;
   font-size: 12px;
+  margin-top: 2px;
+}
+
+.messageBody {
+  max-width: min(310px, calc(100vw - 78px));
 }
 
 .bubble {
-  max-width: min(296px, calc(100vw - 78px));
-  padding: 11px 13px;
+  max-width: 100%;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 4px 15px 15px 15px;
   color: #253d40;
   background: white;
   box-shadow: 0 5px 18px rgba(16, 42, 45, 0.05);
   font-size: 14px;
-  line-height: 1.46;
-  white-space: pre-wrap;
+  line-height: 1.5;
 }
 
 .user .bubble {
@@ -235,6 +239,71 @@
   border-radius: 15px 15px 4px 15px;
   background: var(--ink);
   box-shadow: none;
+  white-space: pre-wrap;
+}
+
+.messageContent {
+  display: grid;
+  gap: 10px;
+}
+
+.messageContent p,
+.messageContent ol,
+.messageContent ul,
+.messageContent blockquote {
+  margin: 0;
+}
+
+.messageContent ol,
+.messageContent ul {
+  display: grid;
+  gap: 7px;
+  padding-left: 21px;
+}
+
+.messageContent li {
+  padding-left: 2px;
+}
+
+.messageContent li::marker {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.messageContent strong {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.messageContent em {
+  color: #40585b;
+}
+
+.messageContent code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: #7b3524;
+  background: #fff1ec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.messageContent a {
+  color: #b53e25;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.messageContent blockquote {
+  padding-left: 10px;
+  border-left: 3px solid #f3a18d;
+  color: #506568;
+}
+
+.messageContent .messageHeading {
+  color: var(--ink);
+  font-weight: 800;
 }
 
 .typing {
@@ -275,21 +344,25 @@
 }
 
 .feedback {
-  margin: 7px 0 0 4px;
+  margin: 8px 0 0 2px;
   display: flex;
   align-items: center;
   gap: 5px;
   color: var(--muted);
-  font-size: 10px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
 }
 
 .feedback button {
-  width: 24px;
-  height: 22px;
+  min-width: 34px;
+  height: 25px;
+  padding: 0 9px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 999px;
   color: #536769;
   background: white;
+  font-size: 10px;
+  font-weight: 800;
   cursor: pointer;
 }
 

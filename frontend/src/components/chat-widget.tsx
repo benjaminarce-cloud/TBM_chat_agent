@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import styles from "./chat-widget.module.css";
 
 type Locale = "es" | "en";
@@ -32,9 +33,9 @@ type ChatWidgetProps = {
   parentPage?: string;
   referrer?: string;
   utm: Record<string, string | undefined>;
+  noticeVersion: string;
+  privacyNotice: Record<Locale, string>;
 };
-
-const NOTICE_VERSION = "pilot-placeholder-v0-legal-review-required";
 
 const copy = {
   es: {
@@ -56,14 +57,14 @@ const copy = {
     streamInterrupted: "La conexión se interrumpió. Puedes volver a intentarlo.",
     emptyResponse: "No recibí una respuesta. Inténtalo de nuevo o solicita hablar con ventas.",
     rate: "Has enviado mensajes muy rápido. Espera un momento e inténtalo de nuevo.",
-    noticeTitle: "Aviso de privacidad pendiente de revisión legal",
-    notice:
-      "[MARCADOR LEGAL — TBM/asesoría debe proporcionar el texto aprobado en español que cubra: finalidad de calificación y seguimiento; transferencia/almacenamiento en EE. UU.; minimización de datos; y contacto para derechos ARCO.]",
-    accept: "Aceptar aviso piloto",
+    noticeTitle: "Aviso de privacidad",
+    accept: "Aceptar aviso",
     accepting: "Guardando aceptación…",
-    accepted: "Aviso piloto aceptado",
+    accepted: "Aviso aceptado",
     consentError: "No se pudo guardar tu aceptación. Inténtalo de nuevo.",
     feedback: "¿Te ayudó esta respuesta?",
+    feedbackUp: "Sí",
+    feedbackDown: "No",
     helpful: "Sí, fue útil",
     notHelpful: "No fue útil",
     feedbackThanks: "Gracias por tus comentarios.",
@@ -91,14 +92,14 @@ const copy = {
     streamInterrupted: "The connection was interrupted. You can try again.",
     emptyResponse: "I didn’t receive a response. Try again or ask to speak with sales.",
     rate: "You’re sending messages too quickly. Wait a moment and try again.",
-    noticeTitle: "Privacy notice pending legal review",
-    notice:
-      "[LEGAL PLACEHOLDER — TBM/counsel must provide approved English copy covering: qualification/follow-up purpose; US transfer/storage; data minimization; and an ARCO-rights contact.]",
-    accept: "Accept pilot notice",
+    noticeTitle: "Privacy notice",
+    accept: "Accept notice",
     accepting: "Saving acceptance…",
-    accepted: "Pilot notice accepted",
+    accepted: "Notice accepted",
     consentError: "We couldn’t save your acceptance. Please try again.",
     feedback: "Was this response helpful?",
+    feedbackUp: "Yes",
+    feedbackDown: "No",
     helpful: "Yes, this was helpful",
     notHelpful: "This was not helpful",
     feedbackThanks: "Thanks for your feedback.",
@@ -125,6 +126,150 @@ function exactOrigin(value: string | undefined, fallback: string) {
   }
 }
 
+const inlineMarkdownPattern =
+  /(\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*([^*\n]+)\*|_([^_\n]+)_)/g;
+
+function renderInlineMarkdown(value: string) {
+  const output: ReactNode[] = [];
+  let cursor = 0;
+
+  for (const match of value.matchAll(inlineMarkdownPattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) output.push(value.slice(cursor, index));
+
+    if (match[2] || match[3]) {
+      output.push(<strong key={index}>{match[2] ?? match[3]}</strong>);
+    } else if (match[4]) {
+      output.push(<code key={index}>{match[4]}</code>);
+    } else if (match[5] && match[6]) {
+      output.push(
+        <a key={index} href={match[6]} target="_blank" rel="noreferrer noopener">
+          {match[5]}
+        </a>,
+      );
+    } else if (match[7] || match[8]) {
+      output.push(<em key={index}>{match[7] ?? match[8]}</em>);
+    }
+    cursor = index + match[0].length;
+  }
+
+  if (cursor < value.length) output.push(value.slice(cursor));
+  return output;
+}
+
+type MessageBlock =
+  | { type: "paragraph"; content: string }
+  | { type: "heading"; content: string }
+  | { type: "quote"; content: string }
+  | { type: "ordered"; items: string[]; start?: number }
+  | { type: "unordered"; items: string[] };
+
+function parseMessageBlocks(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").trim().split("\n");
+  const blocks: MessageBlock[] = [];
+  let index = 0;
+
+  const isBlockStart = (line: string) =>
+    /^(?:#{1,3}\s+|>\s*|\d+[.)]\s+|[-*•]\s+)/.test(line.trim());
+
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    if (heading) {
+      blocks.push({ type: "heading", content: heading[1] });
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith(">")) {
+      const quote: string[] = [];
+      while (index < lines.length && lines[index].trim().startsWith(">")) {
+        quote.push(lines[index].trim().replace(/^>\s?/, ""));
+        index += 1;
+      }
+      blocks.push({ type: "quote", content: quote.join(" ") });
+      continue;
+    }
+
+    const ordered = line.match(/^(\d+)[.)]\s+(.+)$/);
+    const unordered = line.match(/^[-*•]\s+(.+)$/);
+    if (ordered || unordered) {
+      const type = ordered ? "ordered" : "unordered";
+      const items: string[] = [];
+      const start = ordered ? Number(ordered[1]) : undefined;
+
+      while (index < lines.length) {
+        const current = lines[index].trim();
+        const currentItem =
+          type === "ordered"
+            ? current.match(/^\d+[.)]\s+(.+)$/)
+            : current.match(/^[-*•]\s+(.+)$/);
+        if (currentItem) {
+          items.push(currentItem[1]);
+          index += 1;
+          continue;
+        }
+        if (current && !isBlockStart(current) && items.length > 0) {
+          items[items.length - 1] += ` ${current}`;
+          index += 1;
+          continue;
+        }
+        break;
+      }
+
+      blocks.push({ type, items, start });
+      continue;
+    }
+
+    const paragraph = [line];
+    index += 1;
+    while (index < lines.length) {
+      const next = lines[index].trim();
+      if (!next || isBlockStart(next)) break;
+      paragraph.push(next);
+      index += 1;
+    }
+    blocks.push({ type: "paragraph", content: paragraph.join(" ") });
+  }
+
+  return blocks;
+}
+
+function FormattedMessage({ content }: { content: string }) {
+  return (
+    <div className={styles.messageContent}>
+      {parseMessageBlocks(content).map((block, index) => {
+        if (block.type === "ordered" || block.type === "unordered") {
+          const List = block.type === "ordered" ? "ol" : "ul";
+          return (
+            <List key={index} start={block.type === "ordered" ? block.start : undefined}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
+              ))}
+            </List>
+          );
+        }
+        if (block.type === "heading") {
+          return (
+            <p key={index} className={styles.messageHeading}>
+              {renderInlineMarkdown(block.content)}
+            </p>
+          );
+        }
+        if (block.type === "quote") {
+          return <blockquote key={index}>{renderInlineMarkdown(block.content)}</blockquote>;
+        }
+        return <p key={index}>{renderInlineMarkdown(block.content)}</p>;
+      })}
+    </div>
+  );
+}
+
 export default function ChatWidget({
   initialLocale,
   apiUrl,
@@ -132,6 +277,8 @@ export default function ChatWidget({
   parentPage,
   referrer,
   utm,
+  noticeVersion,
+  privacyNotice,
 }: ChatWidgetProps) {
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const [session, setSession] = useState<SessionState | null>(null);
@@ -252,7 +399,7 @@ export default function ChatWidget({
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
-          notice_version: NOTICE_VERSION,
+          notice_version: noticeVersion,
           locale,
           cross_border_ack: true,
         }),
@@ -266,7 +413,7 @@ export default function ChatWidget({
 
   async function sendMessage(value = draft) {
     const content = value.trim();
-    if (!content || !session || busy || conversationEnded) return;
+    if (!content || !session || busy || conversationEnded || consentStatus !== "accepted") return;
     setDraft("");
     setBusy(true);
     setFeedback(null);
@@ -459,9 +606,15 @@ export default function ChatWidget({
           return (
             <div key={message.id} className={`${styles.messageRow} ${styles[message.role]}`}>
               {message.role === "assistant" && <span className={styles.avatar}>T</span>}
-              <div>
+              <div className={styles.messageBody}>
                 <div className={styles.bubble}>
-                  {message.content || (
+                  {message.content ? (
+                    message.role === "assistant" ? (
+                      <FormattedMessage content={message.content} />
+                    ) : (
+                      message.content
+                    )
+                  ) : (
                     <span className={styles.typing} role="status" aria-label={text.typing} />
                   )}
                 </div>
@@ -480,7 +633,7 @@ export default function ChatWidget({
                           className={messageFeedback?.value === "up" ? styles.selectedFeedback : ""}
                           disabled={messageFeedback?.status === "saving"}
                         >
-                          <span aria-hidden="true">↑</span>
+                          {text.feedbackUp}
                         </button>
                         <button
                           type="button"
@@ -490,7 +643,7 @@ export default function ChatWidget({
                           className={messageFeedback?.value === "down" ? styles.selectedFeedback : ""}
                           disabled={messageFeedback?.status === "saving"}
                         >
-                          <span aria-hidden="true">↓</span>
+                          {text.feedbackDown}
                         </button>
                         {messageFeedback?.status === "error" && (
                           <span className={styles.inlineError}>{text.feedbackError}</span>
@@ -504,7 +657,7 @@ export default function ChatWidget({
           );
         })}
 
-        {messages.length === 1 && sessionStatus === "ready" && (
+        {messages.length === 1 && sessionStatus === "ready" && consentStatus === "accepted" && (
           <div className={styles.suggestions} aria-label="Suggested messages">
             {text.suggestions.map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => void sendMessage(suggestion)}>
@@ -528,7 +681,7 @@ export default function ChatWidget({
               </span>
               <div>
                 <strong id="consent-title">{text.noticeTitle}</strong>
-                <p>{text.notice}</p>
+                <p>{privacyNotice[locale]}</p>
               </div>
             </div>
             {consentStatus === "error" && (
@@ -564,11 +717,17 @@ export default function ChatWidget({
           placeholder={conversationEnded ? text.ended : text.placeholder}
           aria-label={text.placeholder}
           rows={1}
-          disabled={!session || busy || conversationEnded}
+          disabled={!session || busy || conversationEnded || consentStatus !== "accepted"}
         />
         <button
           type="submit"
-          disabled={!draft.trim() || !session || busy || conversationEnded}
+          disabled={
+            !draft.trim() ||
+            !session ||
+            busy ||
+            conversationEnded ||
+            consentStatus !== "accepted"
+          }
           aria-label={text.send}
         >
           <span aria-hidden="true">↑</span>

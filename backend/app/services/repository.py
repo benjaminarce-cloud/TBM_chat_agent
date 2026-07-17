@@ -51,9 +51,18 @@ def normalize_phone(value: str, language: str | None = None) -> str | None:
         return None
 
 
-async def latest_consent(db: AsyncSession, session_id: uuid.UUID) -> Consent | None:
+async def active_consent(
+    db: AsyncSession, session_id: uuid.UUID, notice_version: str
+) -> Consent | None:
     return await db.scalar(
-        select(Consent).where(Consent.session_id == session_id).order_by(Consent.ts.desc()).limit(1)
+        select(Consent)
+        .where(
+            Consent.session_id == session_id,
+            Consent.notice_version == notice_version,
+            Consent.cross_border_ack.is_(True),
+        )
+        .order_by(Consent.ts.desc())
+        .limit(1)
     )
 
 
@@ -81,10 +90,10 @@ async def get_history(db: AsyncSession, session_id: uuid.UUID, limit: int = 12) 
 
 
 async def upsert_lead_fields(
-    db: AsyncSession, session_id: uuid.UUID, extracted: dict
+    db: AsyncSession, session_id: uuid.UUID, extracted: dict, notice_version: str
 ) -> LeadUpsertResult:
     """The consent check is intentionally inside the write boundary, not only in the API."""
-    consent = await latest_consent(db, session_id)
+    consent = await active_consent(db, session_id, notice_version)
     if consent is None or not extracted:
         return LeadUpsertResult(
             None, consented=consent is not None, newly_captured=False, changed_fields=[]
@@ -133,10 +142,11 @@ async def persist_message_if_consented(
     session_id: uuid.UUID,
     role: str,
     content: str,
+    notice_version: str,
     latency_ms: int | None = None,
 ) -> bool:
     """Persist no transcript at all pre-consent, which is stricter than PII pattern guessing."""
-    consented = await latest_consent(db, session_id) is not None
+    consented = await active_consent(db, session_id, notice_version) is not None
     if consented:
         db.add(
             Message(

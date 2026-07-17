@@ -1,7 +1,20 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -38,6 +51,10 @@ class Message(Base):
 
 class Consent(Base):
     __tablename__ = "consents"
+    __table_args__ = (
+        CheckConstraint("cross_border_ack = true", name="consents_ack_required"),
+        UniqueConstraint("session_id", "notice_version", name="uq_consents_session_notice"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("sessions.id"), index=True)

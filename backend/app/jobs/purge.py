@@ -3,13 +3,17 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, update
 
+from app.config import get_settings
 from app.db import SessionLocal
 from app.models import Consent, Event, Lead, Message, RateLimitBucket, Session
 
 
-async def purge_expired_data(retention_days: int = 90) -> int:
+async def purge_expired_data() -> int:
+    settings = get_settings()
     now = datetime.now(UTC)
-    cutoff = now - timedelta(days=retention_days)
+    transcript_cutoff = now - timedelta(days=settings.transcript_retention_days)
+    uncaptured_cutoff = now - timedelta(days=settings.uncaptured_retention_days)
+    captured_cutoff = now - timedelta(days=settings.captured_lead_retention_days)
     captured = (
         select(Lead.id)
         .where(
@@ -28,16 +32,33 @@ async def purge_expired_data(retention_days: int = 90) -> int:
         await db.execute(
             delete(RateLimitBucket).where(RateLimitBucket.updated_at < now - timedelta(days=7))
         )
-        session_ids = list(
+        # Transcript content and page context have a hard ceiling, including captured leads.
+        await db.execute(delete(Message).where(Message.ts < transcript_cutoff))
+        await db.execute(
+            update(Session).where(Session.started_at < transcript_cutoff).values(source=None)
+        )
+        uncaptured_ids = set(
             (
                 await db.scalars(
                     select(Session.id).where(
-                        Session.started_at < cutoff,
+                        Session.started_at < uncaptured_cutoff,
                         or_(~captured, disqualified),
                     )
                 )
             ).all()
         )
+        captured_ids = set(
+            (
+                await db.scalars(
+                    select(Session.id).where(
+                        Session.started_at < captured_cutoff,
+                        captured,
+                        ~disqualified,
+                    )
+                )
+            ).all()
+        )
+        session_ids = list(uncaptured_ids | captured_ids)
         if not session_ids:
             await db.commit()
             return 0
@@ -50,7 +71,12 @@ async def purge_expired_data(retention_days: int = 90) -> int:
         db.add_all(
             [
                 Event(
-                    session_id=session_id, type="purged", payload={"retention_days": retention_days}
+                    session_id=session_id,
+                    type="purged",
+                    payload={
+                        "uncaptured_retention_days": settings.uncaptured_retention_days,
+                        "captured_lead_retention_days": settings.captured_lead_retention_days,
+                    },
                 )
                 for session_id in session_ids
             ]

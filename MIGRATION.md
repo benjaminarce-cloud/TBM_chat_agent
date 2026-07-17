@@ -15,7 +15,7 @@ not complete, pause new production lead collection rather than silently extendin
 
 1. Create new TBM-owned Vercel, Railway (or approved long-running container host), Neon, Anthropic,
    and Resend resources. Keep staging and production separate.
-2. Enable `vector` and `pgcrypto`, run `alembic upgrade head`, load reviewed KB documents, then run
+2. Enable `pgcrypto`, run `alembic upgrade head`, load reviewed KB documents, then run
    `python -m app.jobs.compile_kb` in both environments.
 3. Move secrets through each provider's secret manager. Rotate token signing and IP-hash salts; do
    not copy personal-account secrets. Configure approved origins, rate limits, alert thresholds,
@@ -50,8 +50,9 @@ At the trigger:
 
 1. Add chunk and embedding tables plus a versioned indexing job; keep `kb_documents` as the source
    of truth.
-2. Embed only approved documents, record model/version, and use pgvector (already enabled) for
-   candidates. Add hybrid lexical/vector retrieval and reranking only if evals justify them.
+2. Add a migration that enables pgvector, embed only approved documents, record model/version, and
+   use vector retrieval for candidates. Add hybrid lexical/vector retrieval and reranking only if
+   evals justify them.
 3. Retrieve a small cited context set per turn while keeping the policy block prompt-cached.
 4. Run bilingual grounding, stale-document, no-result, prompt-injection, and pricing evals before
    enabling retrieval in staging.

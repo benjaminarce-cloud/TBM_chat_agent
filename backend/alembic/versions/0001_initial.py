@@ -1,4 +1,4 @@
-"""Initial pgvector-ready pilot schema and analytics views.
+"""Initial pilot schema and analytics views.
 
 Revision ID: 0001
 Revises:
@@ -13,7 +13,6 @@ depends_on = None
 
 
 TABLES_SQL = """
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE sessions (

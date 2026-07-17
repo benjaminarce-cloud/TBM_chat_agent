@@ -14,6 +14,7 @@ async def test_no_lead_field_is_written_without_prior_consent() -> None:
         db,
         uuid.uuid4(),
         {"name": "Sensitive Name", "email": "private@example.com"},
+        "approved-v1",
     )
     assert result.consented is False
     assert result.lead is None

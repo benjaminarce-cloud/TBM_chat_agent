@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import re
 import time
@@ -16,6 +17,7 @@ from app.config import Settings, get_settings
 from app.db import SessionLocal, get_db
 from app.models import Consent, Session
 from app.schemas import (
+    ComputerUseCreate,
     ConsentCreate,
     FeedbackCreate,
     MessageCreate,
@@ -29,10 +31,12 @@ from app.security import (
     hash_ip,
     require_allowed_origin,
 )
+from app.services.computer_use import ComputerUseBusyError, run_computer_use
 from app.services.email import send_handoff_if_needed
 from app.services.llm import ClaudeService, LLMStreamItem, estimated_cost_usd
 from app.services.rate_limit import consume
 from app.services.repository import (
+    active_consent,
     get_history,
     lead_is_captured,
     lock_session,
@@ -44,6 +48,7 @@ from app.services.safety import (
     capped_handoff,
     contains_price_value,
     forced_response,
+    preserve_contact_context,
     pricing_pivot,
     safe_failure,
     should_cap_after_increment,
@@ -52,17 +57,53 @@ from app.services.safety import (
 router = APIRouter(prefix="/api")
 
 
+@router.post("/computer-use")
+async def computer_use(
+    body: ComputerUseCreate,
+    request: Request,
+    x_computer_use_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Run an internal, bounded browser task; never exposed to visitor chat sessions."""
+    if not settings.computer_use_enabled or not settings.computer_use_api_token:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not x_computer_use_token or not hmac.compare_digest(
+        x_computer_use_token, settings.computer_use_api_token
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    limit = await consume(
+        db,
+        f"computer-use:ip:{hash_ip(_client_ip(request), settings)}",
+        settings.computer_use_rate_limit_capacity,
+        settings.computer_use_rate_limit_refill_per_minute,
+    )
+    await db.commit()
+    if not limit.allowed:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        async with asyncio.timeout(settings.computer_use_timeout_seconds):
+            result = await run_computer_use(body.task, body.start_url, settings)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ComputerUseBusyError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Computer-use task failed") from exc
+    return {"text": result.text, "steps": result.steps}
+
+
 def _sse(event: str, data: dict | str) -> bytes:
     payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
     return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
 def _client_ip(request: Request) -> str:
-    # Trust proxy normalization to the hosting platform; never store this raw value.
-    forwarded = request.headers.get("x-forwarded-for", "")
-    return (forwarded.split(",", 1)[0].strip() if forwarded else "") or (
-        request.client.host if request.client else "unknown"
-    )
+    # Uvicorn normalizes this only for FORWARDED_ALLOW_IPS-trusted proxies.
+    # Never parse forwarding headers in application code.
+    return request.client.host if request.client else "unknown"
 
 
 def _safe_url(value: str | None) -> str | None:
@@ -174,11 +215,27 @@ async def grant_consent(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     _authorized(request, session_id, authorization, settings)
-    if not await db.get(Session, session_id):
+    if body.notice_version != settings.privacy_notice_version:
+        raise HTTPException(status_code=400, detail="Privacy notice version is not current")
+    chat_session = await lock_session(db, session_id)
+    if chat_session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    limit = await consume(
+        db,
+        f"consent:session:{session_id}",
+        settings.consent_rate_limit_capacity,
+        settings.consent_rate_limit_refill_per_minute,
+    )
+    if not limit.allowed:
+        await db.commit()
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    existing = await active_consent(db, session_id, settings.privacy_notice_version)
+    if existing is not None:
+        await db.commit()
+        return {"consent_id": str(existing.id)}
     consent = Consent(
         session_id=session_id,
-        notice_version=body.notice_version,
+        notice_version=settings.privacy_notice_version,
         locale=body.locale,
         cross_border_ack=body.cross_border_ack,
         ip_hash=hash_ip(_client_ip(request), settings),
@@ -189,7 +246,7 @@ async def grant_consent(
         db,
         session_id,
         "consent_granted",
-        {"notice_version": body.notice_version, "locale": body.locale},
+        {"notice_version": settings.privacy_notice_version, "locale": body.locale},
     )
     await db.commit()
     return {"consent_id": str(consent.id)}
@@ -207,6 +264,17 @@ async def feedback(
     _authorized(request, session_id, authorization, settings)
     if not await db.get(Session, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    if await active_consent(db, session_id, settings.privacy_notice_version) is None:
+        raise HTTPException(status_code=403, detail="Privacy consent required")
+    limit = await consume(
+        db,
+        f"feedback:session:{session_id}",
+        settings.feedback_rate_limit_capacity,
+        settings.feedback_rate_limit_refill_per_minute,
+    )
+    if not limit.allowed:
+        await db.commit()
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     await record_event(db, session_id, "feedback", {"thumbs": body.thumbs})
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -222,9 +290,16 @@ async def _finalize_turn(
     settings: Settings,
 ) -> None:
     async with SessionLocal() as db:
-        result = await upsert_lead_fields(db, session_id, analysis.extracted)
+        result = await upsert_lead_fields(
+            db, session_id, analysis.extracted, settings.privacy_notice_version
+        )
         await persist_message_if_consented(
-            db, session_id, "assistant", assistant_text, full_latency_ms
+            db,
+            session_id,
+            "assistant",
+            assistant_text,
+            settings.privacy_notice_version,
+            full_latency_ms,
         )
         await record_event(db, session_id, "first_token", {"latency_ms": first_token_ms})
         if analysis.escalate or analysis.intent in {"pricing_ask", "human_request"}:
@@ -265,7 +340,15 @@ async def _capped_stream(
     yield _sse("token", {"text": text_value})
     elapsed = int((time.perf_counter() - started) * 1000)
     async with SessionLocal() as db:
-        await persist_message_if_consented(db, session_id, "assistant", text_value, elapsed)
+        settings = get_settings()
+        await persist_message_if_consented(
+            db,
+            session_id,
+            "assistant",
+            text_value,
+            settings.privacy_notice_version,
+            elapsed,
+        )
         await record_event(db, session_id, "first_token", {"latency_ms": elapsed})
         await db.commit()
     yield _sse("done", {"capped": True})
@@ -305,6 +388,8 @@ async def message(
     chat_session = await lock_session(db, session_id)
     if chat_session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if await active_consent(db, session_id, settings.privacy_notice_version) is None:
+        raise HTTPException(status_code=403, detail="Privacy consent required")
     if (
         chat_session.status != "active"
         or chat_session.message_count >= settings.session_message_cap
@@ -326,7 +411,9 @@ async def message(
         chat_session.status = "capped"
         await record_event(db, session_id, "capped", None)
     history = await get_history(db, session_id)
-    await persist_message_if_consented(db, session_id, "user", body.content)
+    await persist_message_if_consented(
+        db, session_id, "user", body.content, settings.privacy_notice_version
+    )
     locale = chat_session.locale
     await db.commit()
 
@@ -370,6 +457,7 @@ async def message(
                 extracted={},
             )
 
+        analysis = preserve_contact_context(analysis, body.content)
         turn_locale = analysis.extracted.get("language", locale)
         forced = forced_response(analysis, turn_locale)
         complete_text = ""

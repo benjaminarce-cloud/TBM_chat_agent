@@ -51,6 +51,12 @@ Classification policy:
 - question: relevant freight/company question or qualification response.
 - off_topic: unrelated to freight, logistics, TBM, or obtaining a shipment follow-up.
 
+Contact-channel replies are qualification responses, not off-topic messages: classify a
+short "correo", "email", or "mail" as question and extract preferred_contact="email";
+classify "teléfono", "phone", or "llamada" as preferred_contact="phone"; and
+"WhatsApp" as preferred_contact="whatsapp". Preserve this meaning even when the reply
+is only one word, and never restart the conversation with a generic greeting.
+
 The extracted object may contain only fields in the schema. Extract only values directly
 stated in the current turn. Never infer TBM company facts. Never put pricing in extracted
 fields or notes. The language field is the one value you may infer from the current turn's
