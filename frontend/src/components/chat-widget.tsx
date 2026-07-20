@@ -71,6 +71,7 @@ const copy = {
     feedbackError: "No se pudo enviar. Inténtalo de nuevo.",
     typing: "TBM está escribiendo",
     ended: "Este chat llegó a su límite. Un especialista de TBM puede continuar contigo.",
+    closed: "Conversación finalizada. El equipo de ventas de TBM dará seguimiento a tu solicitud.",
     disclaimer: "Piloto • TBM no proporciona tarifas en el chat",
     suggestions: ["Quiero solicitar una cotización", "Quiero hablar con ventas"],
   },
@@ -106,6 +107,7 @@ const copy = {
     feedbackError: "We couldn’t send it. Please try again.",
     typing: "TBM is typing",
     ended: "This chat reached its limit. A TBM specialist can continue with you.",
+    closed: "Conversation complete. The TBM sales team will follow up on your request.",
     disclaimer: "Pilot • TBM does not provide rates in chat",
     suggestions: ["I want to request a quote", "I want to speak with sales"],
   },
@@ -290,7 +292,9 @@ export default function ChatWidget({
   const [draft, setDraft] = useState("");
   const [consentStatus, setConsentStatus] = useState<ConsentStatus>("idle");
   const [busy, setBusy] = useState(false);
-  const [conversationEnded, setConversationEnded] = useState(false);
+  const [conversationEndReason, setConversationEndReason] = useState<"capped" | "closed" | null>(
+    null,
+  );
   const [requestError, setRequestError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -386,7 +390,7 @@ export default function ChatWidget({
     setSession(null);
     setSessionStatus("connecting");
     setConsentStatus("idle");
-    setConversationEnded(false);
+    setConversationEndReason(null);
     setRequestError(null);
     setSessionAttempt((current) => current + 1);
   }
@@ -413,7 +417,8 @@ export default function ChatWidget({
 
   async function sendMessage(value = draft) {
     const content = value.trim();
-    if (!content || !session || busy || conversationEnded || consentStatus !== "accepted") return;
+    if (!content || !session || busy || conversationEndReason || consentStatus !== "accepted")
+      return;
     setDraft("");
     setBusy(true);
     setFeedback(null);
@@ -453,7 +458,11 @@ export default function ChatWidget({
           .join("\n");
         if (!rawData) return;
 
-        const data = JSON.parse(rawData) as { text?: unknown; capped?: unknown };
+        const data = JSON.parse(rawData) as {
+          text?: unknown;
+          capped?: unknown;
+          closed?: unknown;
+        };
         if (event === "token" && typeof data.text === "string") {
           receivedText += data.text;
           setMessages((current) =>
@@ -465,7 +474,10 @@ export default function ChatWidget({
           );
         }
         if (event === "done" && data.capped === true) {
-          setConversationEnded(true);
+          setConversationEndReason("capped");
+        }
+        if (event === "done" && data.closed === true) {
+          setConversationEndReason("closed");
         }
       };
 
@@ -701,9 +713,9 @@ export default function ChatWidget({
           <p className={styles.accepted}>✓ {text.accepted}</p>
         )}
 
-        {conversationEnded && (
+        {conversationEndReason && (
           <p className={styles.ended} role="status">
-            {text.ended}
+            {conversationEndReason === "closed" ? text.closed : text.ended}
           </p>
         )}
         <div ref={bottomRef} />
@@ -714,10 +726,16 @@ export default function ChatWidget({
           value={draft}
           onChange={(event) => setDraft(event.target.value.slice(0, 2000))}
           onKeyDown={onKeyDown}
-          placeholder={conversationEnded ? text.ended : text.placeholder}
+          placeholder={
+            conversationEndReason === "closed"
+              ? text.closed
+              : conversationEndReason === "capped"
+                ? text.ended
+                : text.placeholder
+          }
           aria-label={text.placeholder}
           rows={1}
-          disabled={!session || busy || conversationEnded || consentStatus !== "accepted"}
+          disabled={!session || busy || Boolean(conversationEndReason) || consentStatus !== "accepted"}
         />
         <button
           type="submit"
@@ -725,7 +743,7 @@ export default function ChatWidget({
             !draft.trim() ||
             !session ||
             busy ||
-            conversationEnded ||
+            Boolean(conversationEndReason) ||
             consentStatus !== "accepted"
           }
           aria-label={text.send}

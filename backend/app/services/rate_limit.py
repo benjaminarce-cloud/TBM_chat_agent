@@ -54,7 +54,12 @@ async def consume(
         db.add(RateLimitBucket(key=key, tokens=max(0.0, remaining), updated_at=now))
         return BucketResult(allowed=remaining >= 0, remaining=max(0.0, remaining))
 
-    elapsed = (now - bucket.updated_at).total_seconds()
+    updated_at = bucket.updated_at
+    # SQLite drops timezone metadata even for timezone-aware columns. Treat those
+    # values as UTC so the same persistent limiter works in local and CI runs.
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    elapsed = (now - updated_at).total_seconds()
     result = apply_token_bucket(
         bucket.tokens, elapsed, float(capacity), refill_per_minute / 60.0, cost
     )

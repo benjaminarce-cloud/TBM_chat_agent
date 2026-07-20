@@ -15,10 +15,10 @@ const replies = {
     "Puedo ayudarte a obtener un precio exacto con un especialista de TBM, pero no puedo dar ni estimar tarifas aquí. ¿Cuál es el origen, destino, tipo de carga, volumen o frecuencia y fecha prevista de envío?",
 } as const;
 
-function sse(text: string) {
+function sse(text: string, done: Record<string, unknown> = { message_count: 1 }) {
   return [
     `event: token\ndata: ${JSON.stringify({ text })}`,
-    `event: done\ndata: ${JSON.stringify({ message_count: 1 })}`,
+    `event: done\ndata: ${JSON.stringify(done)}`,
     "",
   ].join("\n\n");
 }
@@ -62,6 +62,31 @@ async function fulfillApi(route: Route) {
   }
   if (path.endsWith("/message")) {
     const content = (request.postDataJSON() as { content: string }).content;
+    if (content === "__rate_limit_test__") {
+      await route.fulfill({ status: 429, contentType: "application/json", headers, body: "{}" });
+      return;
+    }
+    if (content === "__close_test__") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        headers,
+        body: sse(
+          "Fue un placer ayudarte. Un miembro del equipo de ventas de TBM te contactará en breve para continuar con tu solicitud.",
+          { closed: true },
+        ),
+      });
+      return;
+    }
+    if (content === "__unsafe_markdown_test__") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        headers,
+        body: sse("Texto seguro <script>window.__xss = true</script> [malicioso](javascript:alert(1))"),
+      });
+      return;
+    }
     const reply =
       content === "Quiero hablar con ventas"
         ? replies.salesEs
@@ -166,4 +191,62 @@ test("mobile widget has no horizontal overflow", async ({ page }) => {
       : true,
   }));
   expect(layout).toEqual({ documentOverflow: false, widgetOverflow: false });
+});
+
+test("server closure ends the conversation instead of restarting it", async ({ page }) => {
+  await page.goto("/widget");
+  await acceptNotice(page, "Aceptar aviso");
+
+  const textbox = page.getByPlaceholder("Escribe tu mensaje…", { exact: true });
+  await textbox.fill("__close_test__");
+  await textbox.press("Enter");
+
+  await expect(
+    page.getByText(
+      "Fue un placer ayudarte. Un miembro del equipo de ventas de TBM te contactará en breve para continuar con tu solicitud.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Conversación finalizada. El equipo de ventas de TBM dará seguimiento a tu solicitud.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toBeDisabled();
+});
+
+test("feedback succeeds and rate limits show a recoverable message", async ({ page }) => {
+  await page.goto("/widget");
+  await acceptNotice(page, "Aceptar aviso");
+  await page.getByRole("button", { name: "Quiero hablar con ventas", exact: true }).click();
+  await page.getByRole("button", { name: "Sí, fue útil", exact: true }).click();
+  await expect(page.getByText("✓ Gracias por tus comentarios.", { exact: true })).toBeVisible();
+
+  const textbox = page.getByPlaceholder("Escribe tu mensaje…", { exact: true });
+  await textbox.fill("__rate_limit_test__");
+  await textbox.press("Enter");
+  await expect(
+    page.getByText("Has enviado mensajes muy rápido. Espera un momento e inténtalo de nuevo.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(textbox).toBeEnabled();
+  const expectedErrors = consoleErrors.get(page) ?? [];
+  expect(expectedErrors.some((message) => message.includes("429 (Too Many Requests)"))).toBe(true);
+  expectedErrors.length = 0;
+});
+
+test("assistant markup is rendered as text unless it is an allowed HTTPS link", async ({ page }) => {
+  await page.goto("/widget");
+  await acceptNotice(page, "Aceptar aviso");
+
+  const textbox = page.getByPlaceholder("Escribe tu mensaje…", { exact: true });
+  await textbox.fill("__unsafe_markdown_test__");
+  await textbox.press("Enter");
+
+  await expect(page.getByText(/<script>window\.__xss = true<\/script>/)).toBeVisible();
+  await expect(page.locator("script").filter({ hasText: "window.__xss" })).toHaveCount(0);
+  await expect(page.locator('a[href^="javascript:"]')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { __xss?: boolean }).__xss)).toBeUndefined();
 });
